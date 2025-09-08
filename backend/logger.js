@@ -1,6 +1,6 @@
-// logger.js
-import fetch from "node-fetch";
+// logger middleware
 import "dotenv/config";
+import fetch from "node-fetch";
 
 export async function log(stack, level, pkg, message) {
   try {
@@ -11,7 +11,7 @@ export async function log(stack, level, pkg, message) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // If the server requires API key/token, replace below with Authorization header
+          // added token provided by affordmed
           Authorization: `Bearer ${process.env.LOG_API_KEY || "dummy-key"}`,
         },
         body: JSON.stringify({
@@ -30,7 +30,7 @@ export async function log(stack, level, pkg, message) {
   }
 }
 
-// Middleware for logging requests
+// adding the logging middleware
 export function logMiddleware(req, res, next) {
   log("backend", "info", "middleware", `Incoming ${req.method} ${req.url}`);
   next();

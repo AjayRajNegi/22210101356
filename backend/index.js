@@ -1,51 +1,53 @@
-import express from "express";
+import "dotenv/config";
 import cors from "cors";
 import crypto from "crypto";
+import express from "express";
 import geoip from "geoip-lite";
 import { log, logMiddleware } from "./logger.js";
-import "dotenv/config";
 
 const app = express();
-const PORT = Number(process.env.PORT) || 3001;
+const PORT = process.env.PORT || 3001; // server running on the port 3001
 
 app.use(express.json());
 app.use(cors());
 app.use(logMiddleware);
+
 const shortUrls = new Map();
 
-function generateShortcode(length = 6) {
+function generateCode(length = 6) {
+  //generate codes with cryptos
   return crypto.randomBytes(length).toString("base64url").slice(0, length);
 }
 
-app.post("/shorturls", (req, res) => {
-  const { url, validity = 30, shortcode } = req.body;
-
-  // Normalize URL to include scheme if omitted (e.g., localhost:3000)
-  let normalizedUrl = url;
-  if (
-    typeof normalizedUrl === "string" &&
-    !/^https?:\/\//i.test(normalizedUrl)
-  ) {
-    normalizedUrl = `http://${normalizedUrl}`;
+function normalizeUrl(url) {
+  if (!/^https?:\/\//i.test(url)) {
+    return `http://${url}`;
   }
+  return url;
+}
+
+// shortURL route
+app.post("/shorturls", (req, res) => {
+  let { url, validity = 30, shortcode } = req.body;
 
   try {
-    new URL(normalizedUrl);
+    url = normalizeUrl(url);
+    new URL(url);
   } catch {
-    log("backend", "error", "handler", "Invalid URL format received");
-    return res.status(400).json({ error: "Invalid URL format" });
+    log("backend", "error", "handler", "Invalid URL");
+    return res.status(400).json({ error: "Invalid URL" });
   }
 
-  let code = shortcode || generateShortcode();
-
+  let code = shortcode || generateCode();
   while (shortUrls.has(code)) {
-    code = generateShortcode();
+    code = generateCode();
   }
 
   const now = Date.now();
-  const expiresAt = now + Number(validity) * 60 * 1000;
+  const expiresAt = now + validity * 60 * 1000;
+
   shortUrls.set(code, {
-    url: normalizedUrl,
+    url,
     createdAt: now,
     expiresAt,
     clicks: [],
@@ -53,51 +55,49 @@ app.post("/shorturls", (req, res) => {
 
   log("backend", "info", "controller", `Short URL created: ${code}`);
 
-  return res.status(201).json({
+  res.status(201).json({
     shortcode: code,
-    url: normalizedUrl,
+    url,
     validity,
     expiresAt,
     shortUrl: `http://localhost:${PORT}/${code}`,
   });
 });
 
+//shortcode routes
 app.get("/:shortcode", (req, res) => {
   const { shortcode } = req.params;
   const entry = shortUrls.get(shortcode);
 
   if (!entry) {
-    log("backend", "warn", "handler", `Shortcode not found: ${shortcode}`);
+    log("backend", "warn", "handler", `Not found: ${shortcode}`);
     return res.status(404).json({ error: "Shortcode not found" });
   }
 
   if (Date.now() > entry.expiresAt) {
     shortUrls.delete(shortcode);
-    log("backend", "warn", "handler", `Shortcode expired: ${shortcode}`);
+    log("backend", "warn", "handler", `Expired: ${shortcode}`);
     return res.status(410).json({ error: "Shortcode expired" });
   }
 
-  const referrer = req.get("referer") || null;
-  const ip = (
-    req.headers["x-forwarded-for"]?.toString().split(",")[0] ||
+  const ip =
+    req.headers["x-forwarded-for"]?.split(",")[0] ||
     req.socket.remoteAddress ||
-    ""
-  ).replace("::ffff:", "");
-  const geo = geoip.lookup(ip) || null;
+    "";
+  const geo = geoip.lookup(ip.replace("::ffff:", ""));
   entry.clicks.push({
     timestamp: Date.now(),
-    referrer,
+    referrer: req.get("referer") || null,
     location: geo
       ? { country: geo.country, region: geo.region, city: geo.city }
       : null,
   });
+
   log("backend", "info", "handler", `Redirecting ${shortcode} -> ${entry.url}`);
-  return res.redirect(entry.url);
+  res.redirect(entry.url);
 });
 
-// Stats route intentionally omitted for basic version
-
 app.listen(PORT, () => {
-  console.log(`🚀 Microservice running at http://localhost:${PORT}`);
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
   log("backend", "info", "config", `Server started on port ${PORT}`);
 });
